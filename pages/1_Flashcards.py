@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 import random
 
 import streamlit as st
 
 from modules.database import (
     get_cards,
+    get_dashboard_stats,
+    get_due_card_count,
     get_filter_options,
+    get_weak_card_count,
     record_view,
     set_bookmark,
     set_confidence,
@@ -19,17 +24,120 @@ st.set_page_config(
 )
 
 st.title("🃏 Flashcards")
-st.caption("Review tax concepts, rate your confidence, and track your progress.")
+st.caption(
+    "Review tax concepts, rate your confidence, "
+    "and focus on the cards that need the most attention."
+)
 
 
 # -------------------------------------------------------------------
-# Filters
+# Helper functions
+# -------------------------------------------------------------------
+
+
+def move_to_previous_card() -> None:
+    if st.session_state.flash_index > 0:
+        st.session_state.flash_index -= 1
+
+    st.session_state.flash_show_answer = False
+
+
+def move_to_next_card(card_count: int) -> None:
+    if st.session_state.flash_index < card_count - 1:
+        st.session_state.flash_index += 1
+
+    st.session_state.flash_show_answer = False
+
+
+def reset_flashcard_session() -> None:
+    st.session_state.flash_index = 0
+    st.session_state.flash_show_answer = False
+    st.session_state.flash_shuffle_ids = None
+
+
+def apply_shuffled_order(cards: list[dict]) -> list[dict]:
+    shuffled_ids = st.session_state.get("flash_shuffle_ids")
+
+    if not shuffled_ids:
+        return cards
+
+    cards_by_id = {
+        card["id"]: card
+        for card in cards
+    }
+
+    ordered_cards = [
+        cards_by_id[card_id]
+        for card_id in shuffled_ids
+        if card_id in cards_by_id
+    ]
+
+    ordered_card_ids = {
+        card["id"]
+        for card in ordered_cards
+    }
+
+    ordered_cards.extend(
+        card
+        for card in cards
+        if card["id"] not in ordered_card_ids
+    )
+
+    return ordered_cards
+
+
+# -------------------------------------------------------------------
+# Data and sidebar
 # -------------------------------------------------------------------
 
 parts, topics = get_filter_options()
 
+stats = get_dashboard_stats()
+due_count = get_due_card_count()
+weak_count = get_weak_card_count()
+
 with st.sidebar:
-    st.header("Study filters")
+    st.header("Study overview")
+
+    metric_column_1, metric_column_2 = st.columns(2)
+
+    with metric_column_1:
+        st.metric(
+            "Due",
+            due_count,
+            help="Cards that are ready for review.",
+        )
+
+    with metric_column_2:
+        st.metric(
+            "Weak",
+            weak_count,
+            help="Cards rated Again or Hard.",
+        )
+
+    st.metric(
+        "Bookmarked",
+        stats["bookmarks"],
+        help="Cards you have saved for later review.",
+    )
+
+    st.divider()
+
+    st.header("Study mode")
+
+    study_mode = st.radio(
+        "Choose which cards to study",
+        [
+            "All Cards",
+            "Due for Review",
+            "Weak Cards",
+        ],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    st.header("Filters")
 
     selected_part = st.selectbox(
         "EA exam part",
@@ -41,23 +149,37 @@ with st.sidebar:
         ["All"] + topics,
     )
 
-    bookmarked_only = st.checkbox("Bookmarked only")
+    bookmarked_only = st.checkbox(
+        "Bookmarked only",
+    )
 
     search = st.text_input(
         "Search cards",
         placeholder="Search questions or answers",
     )
 
+    st.divider()
+
+    if st.button(
+        "Reset study session",
+        use_container_width=True,
+    ):
+        reset_flashcard_session()
+        st.rerun()
+
+
+# -------------------------------------------------------------------
+# Filter handling
+# -------------------------------------------------------------------
 
 filter_signature = (
+    study_mode,
     selected_part,
     selected_topic,
     bookmarked_only,
     search.strip().lower(),
 )
 
-
-# Reset card position and shuffle whenever filters change.
 if st.session_state.get("flash_filter_signature") != filter_signature:
     st.session_state.flash_filter_signature = filter_signature
     st.session_state.flash_shuffle_ids = None
@@ -69,11 +191,25 @@ cards = get_cards(
     topic=selected_topic,
     search=search.strip() or None,
     bookmarked_only=bookmarked_only,
+    due_only=(study_mode == "Due for Review"),
+    weak_only=(study_mode == "Weak Cards"),
 )
 
 
 if not cards:
-    st.warning("No flashcards match the selected filters.")
+    if study_mode == "Due for Review":
+        st.success(
+            "You have no cards due for review right now. Great work! 🎉"
+        )
+    elif study_mode == "Weak Cards":
+        st.success(
+            "You currently have no cards rated Again or Hard. Nice job! 🎉"
+        )
+    else:
+        st.warning(
+            "No flashcards match the selected filters."
+        )
+
     st.stop()
 
 
@@ -81,133 +217,179 @@ if not cards:
 # Session state
 # -------------------------------------------------------------------
 
-st.session_state.setdefault("flash_index", 0)
-st.session_state.setdefault("flash_show_answer", False)
-st.session_state.setdefault("flash_shuffle_ids", None)
+st.session_state.setdefault(
+    "flash_index",
+    0,
+)
+
+st.session_state.setdefault(
+    "flash_show_answer",
+    False,
+)
+
+st.session_state.setdefault(
+    "flash_shuffle_ids",
+    None,
+)
 
 
 # -------------------------------------------------------------------
 # Shuffle controls
 # -------------------------------------------------------------------
 
-control_col1, control_col2, control_col3 = st.columns([1, 1, 2])
+shuffle_column, reset_column, mode_column = st.columns(
+    [1, 1, 1.4]
+)
 
-with control_col1:
+with shuffle_column:
     if st.button(
         "🔀 Shuffle",
         use_container_width=True,
-        help="Shuffle the current set of cards.",
+        help="Shuffle the current card set.",
     ):
-        shuffled_ids = [card["id"] for card in cards]
+        shuffled_ids = [
+            card["id"]
+            for card in cards
+        ]
+
         random.shuffle(shuffled_ids)
 
         st.session_state.flash_shuffle_ids = shuffled_ids
         st.session_state.flash_index = 0
         st.session_state.flash_show_answer = False
+
         st.rerun()
 
 
-with control_col2:
+with reset_column:
     if st.button(
         "↩ Reset order",
         use_container_width=True,
-        help="Return cards to their original order.",
+        help="Restore the original card order.",
     ):
         st.session_state.flash_shuffle_ids = None
         st.session_state.flash_index = 0
         st.session_state.flash_show_answer = False
+
         st.rerun()
 
 
-with control_col3:
+with mode_column:
     if st.session_state.flash_shuffle_ids:
-        st.info("Shuffle mode is active.", icon="🔀")
+        st.info(
+            "Shuffle active",
+            icon="🔀",
+        )
+    else:
+        st.info(
+            study_mode,
+            icon="📚",
+        )
 
 
-# Apply the saved shuffled order.
-if st.session_state.flash_shuffle_ids:
-    cards_by_id = {card["id"]: card for card in cards}
-
-    ordered_cards = [
-        cards_by_id[card_id]
-        for card_id in st.session_state.flash_shuffle_ids
-        if card_id in cards_by_id
-    ]
-
-    # Include any new cards that were not present when shuffle began.
-    shuffled_id_set = set(st.session_state.flash_shuffle_ids)
-    ordered_cards.extend(
-        card
-        for card in cards
-        if card["id"] not in shuffled_id_set
-    )
-
-    cards = ordered_cards
+cards = apply_shuffled_order(cards)
 
 
-# Keep the index inside the valid range.
+# -------------------------------------------------------------------
+# Current card
+# -------------------------------------------------------------------
+
 st.session_state.flash_index = min(
     st.session_state.flash_index,
     len(cards) - 1,
 )
 
+st.session_state.flash_index = max(
+    st.session_state.flash_index,
+    0,
+)
 
-card = cards[st.session_state.flash_index]
+card = cards[
+    st.session_state.flash_index
+]
 
 
 # -------------------------------------------------------------------
 # Record card view
 # -------------------------------------------------------------------
 
-view_key = f'flash_viewed_{card["id"]}'
+view_key = (
+    f'flash_viewed_{card["id"]}'
+)
 
 if not st.session_state.get(view_key):
-    record_view(card["id"])
+    record_view(
+        card["id"]
+    )
+
     st.session_state[view_key] = True
 
 
 # -------------------------------------------------------------------
-# Progress
+# Progress information
 # -------------------------------------------------------------------
 
-current_card_number = st.session_state.flash_index + 1
-progress = current_card_number / len(cards)
+current_card_number = (
+    st.session_state.flash_index + 1
+)
 
-st.progress(progress)
+progress_value = (
+    current_card_number / len(cards)
+)
+
+st.progress(
+    progress_value
+)
 
 st.caption(
-    f'Card {current_card_number} of {len(cards)} · '
-    f'{card["exam_part"]} · {card["topic"]}'
+    f"Card {current_card_number} of {len(cards)}"
+    f' · {card["exam_part"]}'
+    f' · {card["topic"]}'
 )
 
 
 # -------------------------------------------------------------------
-# Flashcard
+# Flashcard display
 # -------------------------------------------------------------------
 
-with st.container(border=True):
-    card_heading_col, bookmark_col = st.columns([4, 1])
+with st.container(
+    border=True,
+):
+    heading_column, bookmark_column = st.columns(
+        [5, 1]
+    )
 
-    with card_heading_col:
-        st.markdown("### Question")
+    with heading_column:
+        st.markdown(
+            "### Question"
+        )
 
-    with bookmark_col:
-        bookmark_icon = "★" if card["is_bookmarked"] else "☆"
+    with bookmark_column:
+        bookmark_icon = (
+            "★"
+            if card["is_bookmarked"]
+            else "☆"
+        )
+
+        bookmark_help = (
+            "Remove bookmark"
+            if card["is_bookmarked"]
+            else "Bookmark this card"
+        )
 
         if st.button(
             bookmark_icon,
             key=f'bookmark_{card["id"]}',
             use_container_width=True,
-            help=(
-                "Remove bookmark"
-                if card["is_bookmarked"]
-                else "Bookmark this card"
-            ),
+            help=bookmark_help,
         ):
             set_bookmark(
                 card["id"],
-                not bool(card["is_bookmarked"]),
+                not bool(
+                    card["is_bookmarked"]
+                ),
             )
+
             st.rerun()
 
     st.markdown(
@@ -217,7 +399,7 @@ with st.container(border=True):
             border-radius: 0.75rem;
             background-color: rgba(128, 128, 128, 0.10);
             font-size: 1.1rem;
-            line-height: 1.6;
+            line-height: 1.65;
         ">
             {card["question"]}
         </div>
@@ -242,11 +424,15 @@ with st.container(border=True):
         st.session_state.flash_show_answer = (
             not st.session_state.flash_show_answer
         )
+
         st.rerun()
 
     if st.session_state.flash_show_answer:
         st.divider()
-        st.markdown("### Answer")
+
+        st.markdown(
+            "### Answer"
+        )
 
         st.markdown(
             f"""
@@ -255,7 +441,7 @@ with st.container(border=True):
                 border-radius: 0.75rem;
                 background-color: rgba(46, 160, 67, 0.12);
                 font-size: 1.05rem;
-                line-height: 1.6;
+                line-height: 1.65;
             ">
                 {card["answer"]}
             </div>
@@ -263,20 +449,36 @@ with st.container(border=True):
             unsafe_allow_html=True,
         )
 
-        reference_link(card)
+        reference_link(
+            card
+        )
 
-        st.markdown("#### How well did you know it?")
+        next_review_text = {
+            "Again": "Review again now",
+            "Hard": "Review tomorrow",
+            "Good": "Review in about 3 days",
+            "Easy": "Review in about 7 days",
+        }
 
-        confidence_columns = st.columns(4)
+        st.markdown(
+            "#### How well did you know it?"
+        )
+
+        confidence_columns = st.columns(
+            4
+        )
 
         confidence_options = [
-            ("Again", "Review again"),
-            ("Hard", "Difficult"),
-            ("Good", "Understood"),
-            ("Easy", "Mastered"),
+            ("Again", "Review again now"),
+            ("Hard", "Review tomorrow"),
+            ("Good", "Review in a few days"),
+            ("Easy", "Review next week"),
         ]
 
-        for column, (label, help_text) in zip(
+        for column, (
+            label,
+            help_text,
+        ) in zip(
             confidence_columns,
             confidence_options,
         ):
@@ -284,16 +486,25 @@ with st.container(border=True):
                 if st.button(
                     label,
                     use_container_width=True,
-                    key=f'confidence_{label}_{card["id"]}',
+                    key=(
+                        f'confidence_{label}_'
+                        f'{card["id"]}'
+                    ),
                     help=help_text,
                 ):
-                    set_confidence(card["id"], label)
-                    st.toast(f"Confidence saved as {label}")
+                    set_confidence(
+                        card["id"],
+                        label,
+                    )
 
-                    if st.session_state.flash_index < len(cards) - 1:
-                        st.session_state.flash_index += 1
+                    st.toast(
+                        next_review_text[label]
+                    )
 
-                    st.session_state.flash_show_answer = False
+                    move_to_next_card(
+                        len(cards)
+                    )
+
                     st.rerun()
 
 
@@ -303,22 +514,25 @@ with st.container(border=True):
 
 st.write("")
 
-previous_col, position_col, next_col = st.columns([1, 1.5, 1])
+previous_column, position_column, next_column = st.columns(
+    [1, 1.4, 1]
+)
 
-with previous_col:
-    previous_disabled = st.session_state.flash_index == 0
+with previous_column:
+    previous_disabled = (
+        st.session_state.flash_index == 0
+    )
 
     if st.button(
         "← Previous",
         use_container_width=True,
         disabled=previous_disabled,
     ):
-        st.session_state.flash_index -= 1
-        st.session_state.flash_show_answer = False
+        move_to_previous_card()
         st.rerun()
 
 
-with position_col:
+with position_column:
     st.markdown(
         f"""
         <div style="
@@ -333,18 +547,25 @@ with position_col:
     )
 
 
-with next_col:
-    next_disabled = st.session_state.flash_index >= len(cards) - 1
+with next_column:
+    next_disabled = (
+        st.session_state.flash_index
+        >= len(cards) - 1
+    )
 
     if st.button(
         "Next →",
         use_container_width=True,
         disabled=next_disabled,
     ):
-        st.session_state.flash_index += 1
-        st.session_state.flash_show_answer = False
+        move_to_next_card(
+            len(cards)
+        )
+
         st.rerun()
 
 
 if st.session_state.flash_index == len(cards) - 1:
-    st.success("You reached the end of this flashcard set! 🎉")
+    st.success(
+        "You reached the end of this flashcard set! 🎉"
+    )
