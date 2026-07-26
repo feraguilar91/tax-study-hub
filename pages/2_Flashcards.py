@@ -4,7 +4,7 @@ import random
 
 import streamlit as st
 
-from modules.database import get_dashboard_stats
+from modules.dashboard import get_dashboard_stats
 from modules.flashcards import (
     get_cards,
     get_due_card_count,
