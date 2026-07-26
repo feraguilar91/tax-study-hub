@@ -2,6 +2,7 @@ import streamlit as st
 
 from modules.database import initialize_database
 from modules.dashboard import get_dashboard_stats
+from modules.session_engine import start_session
 
 st.set_page_config(
     page_title="Tax Study Hub",
@@ -10,6 +11,10 @@ st.set_page_config(
 )
 
 initialize_database()
+
+if "study_session_id" not in st.session_state:
+    st.session_state.study_session_id = start_session()
+
 stats = get_dashboard_stats()
 
 st.title("📚 Tax Study Hub")

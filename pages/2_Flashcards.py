@@ -12,12 +12,10 @@ from modules.flashcards import (
     get_weak_card_count,
     set_bookmark,
 )
-
 from modules.progress_engine import (
     record_review,
     record_view,
 )
-
 from modules.ui import reference_link, reset_navigation
 
 
@@ -236,6 +234,10 @@ st.session_state.setdefault(
     None,
 )
 
+study_session_id = st.session_state.get(
+    "study_session_id"
+)
+
 
 # -------------------------------------------------------------------
 # Shuffle controls
@@ -323,7 +325,8 @@ view_key = (
 
 if not st.session_state.get(view_key):
     record_view(
-        card["id"]
+        card["id"],
+        session_id=study_session_id,
     )
 
     st.session_state[view_key] = True
@@ -499,6 +502,7 @@ with st.container(
                     record_review(
                         card["id"],
                         label,
+                        session_id=study_session_id,
                     )
 
                     st.toast(
@@ -518,58 +522,41 @@ with st.container(
 
 st.write("")
 
-previous_column, position_column, next_column = st.columns(
-    [1, 1.4, 1]
+previous_column, counter_column, next_column = st.columns(
+    [1, 1.5, 1]
 )
 
 with previous_column:
-    previous_disabled = (
-        st.session_state.flash_index == 0
-    )
-
     if st.button(
         "← Previous",
         use_container_width=True,
-        disabled=previous_disabled,
+        disabled=(
+            st.session_state.flash_index == 0
+        ),
     ):
         move_to_previous_card()
         st.rerun()
 
-
-with position_column:
+with counter_column:
     st.markdown(
-        f"""
-        <div style="
-            text-align: center;
-            padding-top: 0.55rem;
-            font-weight: 600;
-        ">
-            {current_card_number} / {len(cards)}
-        </div>
-        """,
+        (
+            "<div style='text-align: center; padding-top: 0.5rem;'>"
+            f"{current_card_number} / {len(cards)}"
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
 
-
 with next_column:
-    next_disabled = (
-        st.session_state.flash_index
-        >= len(cards) - 1
-    )
-
     if st.button(
         "Next →",
         use_container_width=True,
-        disabled=next_disabled,
+        disabled=(
+            st.session_state.flash_index
+            >= len(cards) - 1
+        ),
     ):
         move_to_next_card(
             len(cards)
         )
-
         st.rerun()
-
-
-if st.session_state.flash_index == len(cards) - 1:
-    st.success(
-        "You reached the end of this flashcard set! 🎉"
-    )

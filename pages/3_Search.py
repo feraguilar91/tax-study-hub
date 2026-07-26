@@ -1,6 +1,7 @@
 import streamlit as st
 
 from modules.flashcards import get_cards, get_filter_options
+
 from modules.ui import reference_link
 
 st.set_page_config(

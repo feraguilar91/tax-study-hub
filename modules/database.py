@@ -78,6 +78,21 @@ def initialize_database() -> None:
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(card_id) REFERENCES flashcards(id)
             );
+
+            CREATE TABLE IF NOT EXISTS study_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ended_at TEXT,
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                cards_viewed INTEGER NOT NULL DEFAULT 0,
+                quiz_answers INTEGER NOT NULL DEFAULT 0,
+                reviews INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_study_sessions_started_at
+            ON study_sessions(started_at);
             """
         )
 
