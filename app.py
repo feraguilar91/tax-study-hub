@@ -1,6 +1,7 @@
 import streamlit as st
 
-from modules.database import get_dashboard_stats, initialize_database
+from modules.database import initialize_database
+from modules.dashboard import get_dashboard_stats
 
 st.set_page_config(
     page_title="Tax Study Hub",

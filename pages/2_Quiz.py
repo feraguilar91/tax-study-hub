@@ -2,11 +2,13 @@ import random
 
 import streamlit as st
 
-from modules.database import (
+from modules.flashcards import (
     get_cards,
     get_filter_options,
     record_result,
+    record_view,
 )
+
 from modules.ui import reference_link
 
 st.set_page_config(
