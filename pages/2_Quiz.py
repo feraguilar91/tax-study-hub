@@ -5,6 +5,9 @@ import streamlit as st
 from modules.flashcards import (
     get_cards,
     get_filter_options,
+)
+
+from modules.progress_engine import (
     record_result,
     record_view,
 )

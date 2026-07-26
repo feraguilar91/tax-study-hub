@@ -10,10 +10,14 @@ from modules.flashcards import (
     get_due_card_count,
     get_filter_options,
     get_weak_card_count,
-    record_view,
     set_bookmark,
-    set_confidence,
 )
+
+from modules.progress_engine import (
+    record_review,
+    record_view,
+)
+
 from modules.ui import reference_link, reset_navigation
 
 
@@ -492,7 +496,7 @@ with st.container(
                     ),
                     help=help_text,
                 ):
-                    set_confidence(
+                    record_review(
                         card["id"],
                         label,
                     )
