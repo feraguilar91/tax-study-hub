@@ -4,8 +4,8 @@ from datetime import datetime
 
 import streamlit as st
 
-from modules.database import (
-    get_dashboard_stats,
+from modules.database import get_dashboard_stats
+from modules.flashcards import (
     get_due_card_count,
     get_weak_card_count,
 )
