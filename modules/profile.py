@@ -16,6 +16,9 @@ DEFAULT_PROFILE = {
     "part_1_exam_date": None,
     "part_2_exam_date": None,
     "part_3_exam_date": None,
+    "part_1_passed": False,
+    "part_2_passed": False,
+    "part_3_passed": False,
     "daily_card_goal": 30,
 }
 
@@ -39,12 +42,64 @@ def get_connection() -> sqlite3.Connection:
     return connection
 
 
+def get_existing_columns(
+    connection: sqlite3.Connection,
+) -> set[str]:
+    """
+    Return the column names currently present in the profile table.
+    """
+
+    rows = connection.execute(
+        """
+        PRAGMA table_info(user_profile)
+        """
+    ).fetchall()
+
+    return {
+        row["name"]
+        for row in rows
+    }
+
+
+def migrate_profile_database(
+    connection: sqlite3.Connection,
+) -> None:
+    """
+    Add newer profile fields to an existing database.
+
+    SQLite preserves all existing profile data while the new columns
+    are added.
+    """
+
+    existing_columns = get_existing_columns(
+        connection
+    )
+
+    required_columns = {
+        "part_1_passed": (
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+        "part_2_passed": (
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+        "part_3_passed": (
+            "INTEGER NOT NULL DEFAULT 0"
+        ),
+    }
+
+    for column_name, column_definition in required_columns.items():
+        if column_name not in existing_columns:
+            connection.execute(
+                f"""
+                ALTER TABLE user_profile
+                ADD COLUMN {column_name} {column_definition}
+                """
+            )
+
+
 def initialize_profile_database() -> None:
     """
-    Create the profile table when it does not already exist.
-
-    The first version of the app stores one local profile. Once authentication
-    is added, this table can be expanded to store one profile per user.
+    Create and migrate the local profile database.
     """
 
     with get_connection() as connection:
@@ -57,10 +112,17 @@ def initialize_profile_database() -> None:
                 part_1_exam_date TEXT,
                 part_2_exam_date TEXT,
                 part_3_exam_date TEXT,
+                part_1_passed INTEGER NOT NULL DEFAULT 0,
+                part_2_passed INTEGER NOT NULL DEFAULT 0,
+                part_3_passed INTEGER NOT NULL DEFAULT 0,
                 daily_card_goal INTEGER NOT NULL DEFAULT 30,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+
+        migrate_profile_database(
+            connection
         )
 
         connection.execute(
@@ -130,6 +192,9 @@ def get_profile() -> dict[str, Any]:
                 part_1_exam_date,
                 part_2_exam_date,
                 part_3_exam_date,
+                part_1_passed,
+                part_2_passed,
+                part_3_passed,
                 daily_card_goal
             FROM user_profile
             WHERE id = 1
@@ -140,7 +205,10 @@ def get_profile() -> dict[str, Any]:
         return DEFAULT_PROFILE.copy()
 
     return {
-        "display_name": row["display_name"] or "",
+        "display_name": (
+            row["display_name"]
+            or ""
+        ),
         "current_exam_part": (
             row["current_exam_part"]
             or "EA Part 1"
@@ -154,8 +222,18 @@ def get_profile() -> dict[str, Any]:
         "part_3_exam_date": parse_date(
             row["part_3_exam_date"]
         ),
+        "part_1_passed": bool(
+            row["part_1_passed"]
+        ),
+        "part_2_passed": bool(
+            row["part_2_passed"]
+        ),
+        "part_3_passed": bool(
+            row["part_3_passed"]
+        ),
         "daily_card_goal": int(
-            row["daily_card_goal"] or 30
+            row["daily_card_goal"]
+            or 30
         ),
     }
 
@@ -167,9 +245,12 @@ def save_profile(
     part_2_exam_date: date | None,
     part_3_exam_date: date | None,
     daily_card_goal: int,
+    part_1_passed: bool = False,
+    part_2_passed: bool = False,
+    part_3_passed: bool = False,
 ) -> None:
     """
-    Save the local profile and EA exam dates.
+    Save the local profile, exam dates, and exam completion status.
     """
 
     initialize_profile_database()
@@ -200,6 +281,9 @@ def save_profile(
                 part_1_exam_date = ?,
                 part_2_exam_date = ?,
                 part_3_exam_date = ?,
+                part_1_passed = ?,
+                part_2_passed = ?,
+                part_3_passed = ?,
                 daily_card_goal = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
@@ -215,6 +299,15 @@ def save_profile(
                 ),
                 serialize_date(
                     part_3_exam_date
+                ),
+                int(
+                    bool(part_1_passed)
+                ),
+                int(
+                    bool(part_2_passed)
+                ),
+                int(
+                    bool(part_3_passed)
                 ),
                 safe_daily_goal,
             ),
@@ -257,6 +350,35 @@ def get_exam_date(
     )
 
 
+def has_passed_exam(
+    profile: dict[str, Any],
+    exam_part: str,
+) -> bool:
+    """
+    Return whether the selected EA exam part has been passed.
+    """
+
+    passed_key_by_part = {
+        "EA Part 1": "part_1_passed",
+        "EA Part 2": "part_2_passed",
+        "EA Part 3": "part_3_passed",
+    }
+
+    passed_key = passed_key_by_part.get(
+        exam_part
+    )
+
+    if passed_key is None:
+        return False
+
+    return bool(
+        profile.get(
+            passed_key,
+            False,
+        )
+    )
+
+
 def get_days_until_exam(
     exam_date: date | None,
 ) -> int | None:
@@ -287,8 +409,8 @@ def get_exam_message(
 
     if days_remaining < 0:
         return (
-            "This exam date has passed. Update the date when you "
-            "schedule your next exam."
+            "This exam date has passed. Mark the exam as passed or "
+            "update the date when you schedule another attempt."
         )
 
     if days_remaining == 0:

@@ -38,6 +38,10 @@ st.caption(
 
 
 def move_to_previous_card() -> None:
+    """
+    Move backward one card while preserving the locked deck order.
+    """
+
     if st.session_state.flash_index > 0:
         st.session_state.flash_index -= 1
 
@@ -45,51 +49,175 @@ def move_to_previous_card() -> None:
 
 
 def move_to_next_card(card_count: int) -> None:
+    """
+    Move forward one card while preserving the locked deck order.
+    """
+
     if st.session_state.flash_index < card_count - 1:
         st.session_state.flash_index += 1
 
     st.session_state.flash_show_answer = False
 
 
+def clear_flashcard_deck() -> None:
+    """
+    Clear all state associated with the current flashcard deck.
+    """
+
+    st.session_state.flash_index = 0
+    st.session_state.flash_show_answer = False
+    st.session_state.flash_shuffle_ids = None
+    st.session_state.flash_deck_ids = None
+
+
 def reset_flashcard_session() -> None:
+    """
+    Restart the current deck from its first card.
+
+    The locked deck itself is preserved.
+    """
+
     st.session_state.flash_index = 0
     st.session_state.flash_show_answer = False
     st.session_state.flash_shuffle_ids = None
 
 
-def apply_shuffled_order(cards: list[dict]) -> list[dict]:
-    shuffled_ids = st.session_state.get("flash_shuffle_ids")
-
-    if not shuffled_ids:
-        return cards
+def order_cards_by_ids(
+    cards: list[dict],
+    card_ids: list[int],
+) -> list[dict]:
+    """
+    Return cards in the exact order specified by card_ids.
+    """
 
     cards_by_id = {
         card["id"]: card
         for card in cards
     }
 
-    ordered_cards = [
+    return [
         cards_by_id[card_id]
-        for card_id in shuffled_ids
+        for card_id in card_ids
         if card_id in cards_by_id
     ]
 
-    ordered_card_ids = {
-        card["id"]
-        for card in ordered_cards
-    }
 
-    ordered_cards.extend(
-        card
-        for card in cards
-        if card["id"] not in ordered_card_ids
+def get_locked_deck_cards() -> list[dict]:
+    """
+    Load current card data while preserving the locked deck order.
+
+    Card statistics, bookmarks, and confidence may change during a
+    session. The card order must not change when those updates occur.
+    """
+
+    deck_ids = st.session_state.get(
+        "flash_deck_ids"
+    ) or []
+
+    if not deck_ids:
+        return []
+
+    all_cards = get_cards()
+
+    ordered_cards = order_cards_by_ids(
+        all_cards,
+        deck_ids,
     )
+
+    shuffle_ids = st.session_state.get(
+        "flash_shuffle_ids"
+    )
+
+    if shuffle_ids:
+        ordered_cards = order_cards_by_ids(
+            ordered_cards,
+            shuffle_ids,
+        )
 
     return ordered_cards
 
 
+def lock_deck(
+    cards: list[dict],
+) -> None:
+    """
+    Save the current card order for the duration of the study session.
+    """
+
+    st.session_state.flash_deck_ids = [
+        card["id"]
+        for card in cards
+    ]
+
+    st.session_state.flash_shuffle_ids = None
+    st.session_state.flash_index = 0
+    st.session_state.flash_show_answer = False
+
+
+def exit_focused_review() -> None:
+    """
+    Clear the temporary focused-review deck.
+    """
+
+    st.session_state.pop(
+        "focused_review_ids",
+        None,
+    )
+
+    st.session_state.pop(
+        "focused_review_label",
+        None,
+    )
+
+    clear_flashcard_deck()
+    reset_navigation("flash")
+
+
 # -------------------------------------------------------------------
-# Data and sidebar
+# Session state
+# -------------------------------------------------------------------
+
+st.session_state.setdefault(
+    "flash_index",
+    0,
+)
+
+st.session_state.setdefault(
+    "flash_show_answer",
+    False,
+)
+
+st.session_state.setdefault(
+    "flash_shuffle_ids",
+    None,
+)
+
+st.session_state.setdefault(
+    "flash_deck_ids",
+    None,
+)
+
+study_session_id = st.session_state.get(
+    "study_session_id"
+)
+
+focused_review_ids = st.session_state.get(
+    "focused_review_ids",
+    [],
+)
+
+focused_review_label = st.session_state.get(
+    "focused_review_label",
+    "Focused Review",
+)
+
+focused_review_active = bool(
+    focused_review_ids
+)
+
+
+# -------------------------------------------------------------------
+# Data
 # -------------------------------------------------------------------
 
 parts, topics = get_filter_options()
@@ -98,10 +226,17 @@ stats = get_dashboard_stats()
 due_count = get_due_card_count()
 weak_count = get_weak_card_count()
 
+
+# -------------------------------------------------------------------
+# Sidebar
+# -------------------------------------------------------------------
+
 with st.sidebar:
     st.header("Study overview")
 
-    metric_column_1, metric_column_2 = st.columns(2)
+    metric_column_1, metric_column_2 = st.columns(
+        2
+    )
 
     with metric_column_1:
         st.metric(
@@ -125,88 +260,182 @@ with st.sidebar:
 
     st.divider()
 
-    st.header("Study mode")
+    if focused_review_active:
+        st.header("Focused review")
 
-    study_mode = st.radio(
-        "Choose which cards to study",
-        [
-            "All Cards",
-            "Due for Review",
-            "Weak Cards",
-        ],
-        label_visibility="collapsed",
-    )
+        st.info(
+            focused_review_label,
+            icon="🎯",
+        )
 
-    st.divider()
+        st.metric(
+            "Cards in deck",
+            len(focused_review_ids),
+        )
 
-    st.header("Filters")
+        if st.button(
+            "Exit focused review",
+            use_container_width=True,
+        ):
+            exit_focused_review()
+            st.rerun()
 
-    selected_part = st.selectbox(
-        "EA exam part",
-        ["All"] + parts,
-    )
+        st.divider()
 
-    selected_topic = st.selectbox(
-        "Topic",
-        ["All"] + topics,
-    )
+        if st.button(
+            "Restart focused review",
+            use_container_width=True,
+        ):
+            reset_flashcard_session()
+            st.rerun()
 
-    bookmarked_only = st.checkbox(
-        "Bookmarked only",
-    )
+    else:
+        st.header("Study mode")
 
-    search = st.text_input(
-        "Search cards",
-        placeholder="Search questions or answers",
-    )
+        study_mode = st.radio(
+            "Choose which cards to study",
+            [
+                "All Cards",
+                "Due for Review",
+                "Weak Cards",
+            ],
+            label_visibility="collapsed",
+        )
 
-    st.divider()
+        st.divider()
 
-    if st.button(
-        "Reset study session",
-        use_container_width=True,
-    ):
-        reset_flashcard_session()
-        st.rerun()
+        st.header("Filters")
+
+        selected_part = st.selectbox(
+            "EA exam part",
+            ["All"] + parts,
+        )
+
+        selected_topic = st.selectbox(
+            "Topic",
+            ["All"] + topics,
+        )
+
+        bookmarked_only = st.checkbox(
+            "Bookmarked only",
+        )
+
+        search = st.text_input(
+            "Search cards",
+            placeholder="Search questions or answers",
+        )
+
+        st.divider()
+
+        if st.button(
+            "Reset study session",
+            use_container_width=True,
+        ):
+            clear_flashcard_deck()
+            st.rerun()
 
 
 # -------------------------------------------------------------------
-# Filter handling
+# Determine the selected deck
 # -------------------------------------------------------------------
 
-filter_signature = (
-    study_mode,
-    selected_part,
-    selected_topic,
-    bookmarked_only,
-    search.strip().lower(),
+if focused_review_active:
+    filter_signature = (
+        "focused_review",
+        tuple(focused_review_ids),
+        focused_review_label,
+    )
+
+    display_mode = focused_review_label
+
+else:
+    filter_signature = (
+        "normal",
+        study_mode,
+        selected_part,
+        selected_topic,
+        bookmarked_only,
+        search.strip().lower(),
+    )
+
+    display_mode = study_mode
+
+
+# -------------------------------------------------------------------
+# Lock a new deck when the source or filters change
+# -------------------------------------------------------------------
+
+previous_signature = st.session_state.get(
+    "flash_filter_signature"
 )
 
-if st.session_state.get("flash_filter_signature") != filter_signature:
+if previous_signature != filter_signature:
     st.session_state.flash_filter_signature = filter_signature
+    st.session_state.flash_deck_ids = None
     st.session_state.flash_shuffle_ids = None
     reset_navigation("flash")
 
 
-cards = get_cards(
-    exam_part=selected_part,
-    topic=selected_topic,
-    search=search.strip() or None,
-    bookmarked_only=bookmarked_only,
-    due_only=(study_mode == "Due for Review"),
-    weak_only=(study_mode == "Weak Cards"),
-)
+if not st.session_state.get("flash_deck_ids"):
+    if focused_review_active:
+        all_cards = get_cards()
 
+        initial_cards = order_cards_by_ids(
+            all_cards,
+            focused_review_ids,
+        )
+
+    else:
+        initial_cards = get_cards(
+            exam_part=selected_part,
+            topic=selected_topic,
+            search=search.strip() or None,
+            bookmarked_only=bookmarked_only,
+            due_only=(
+                study_mode == "Due for Review"
+            ),
+            weak_only=(
+                study_mode == "Weak Cards"
+            ),
+        )
+
+    if initial_cards:
+        lock_deck(
+            initial_cards
+        )
+
+
+cards = get_locked_deck_cards()
+
+
+# -------------------------------------------------------------------
+# Empty deck handling
+# -------------------------------------------------------------------
 
 if not cards:
-    if study_mode == "Due for Review":
+    if focused_review_active:
+        st.warning(
+            "The focused-review deck no longer contains any available cards."
+        )
+
+        if st.button(
+            "Exit focused review",
+            type="primary",
+            use_container_width=True,
+        ):
+            exit_focused_review()
+            st.rerun()
+
+    elif study_mode == "Due for Review":
         st.success(
             "You have no cards due for review right now. Great work! 🎉"
         )
+
     elif study_mode == "Weak Cards":
         st.success(
             "You currently have no cards rated Again or Hard. Nice job! 🎉"
         )
+
     else:
         st.warning(
             "No flashcards match the selected filters."
@@ -216,27 +445,27 @@ if not cards:
 
 
 # -------------------------------------------------------------------
-# Session state
+# Focused-review heading
 # -------------------------------------------------------------------
 
-st.session_state.setdefault(
-    "flash_index",
-    0,
-)
+if focused_review_active:
+    heading_column, exit_column = st.columns(
+        [3, 1]
+    )
 
-st.session_state.setdefault(
-    "flash_show_answer",
-    False,
-)
+    with heading_column:
+        st.info(
+            f"Focused review: {focused_review_label}",
+            icon="🎯",
+        )
 
-st.session_state.setdefault(
-    "flash_shuffle_ids",
-    None,
-)
-
-study_session_id = st.session_state.get(
-    "study_session_id"
-)
+    with exit_column:
+        if st.button(
+            "Exit review",
+            use_container_width=True,
+        ):
+            exit_focused_review()
+            st.rerun()
 
 
 # -------------------------------------------------------------------
@@ -251,14 +480,15 @@ with shuffle_column:
     if st.button(
         "🔀 Shuffle",
         use_container_width=True,
-        help="Shuffle the current card set.",
+        help="Shuffle the current locked card set.",
     ):
-        shuffled_ids = [
-            card["id"]
-            for card in cards
-        ]
+        shuffled_ids = list(
+            st.session_state.flash_deck_ids
+        )
 
-        random.shuffle(shuffled_ids)
+        random.shuffle(
+            shuffled_ids
+        )
 
         st.session_state.flash_shuffle_ids = shuffled_ids
         st.session_state.flash_index = 0
@@ -271,7 +501,7 @@ with reset_column:
     if st.button(
         "↩ Reset order",
         use_container_width=True,
-        help="Restore the original card order.",
+        help="Restore the deck's original locked order.",
     ):
         st.session_state.flash_shuffle_ids = None
         st.session_state.flash_index = 0
@@ -286,14 +516,18 @@ with mode_column:
             "Shuffle active",
             icon="🔀",
         )
-    else:
+
+    elif focused_review_active:
         st.info(
-            study_mode,
-            icon="📚",
+            "Focused review",
+            icon="🎯",
         )
 
-
-cards = apply_shuffled_order(cards)
+    else:
+        st.info(
+            display_mode,
+            icon="📚",
+        )
 
 
 # -------------------------------------------------------------------
@@ -537,6 +771,7 @@ with previous_column:
         move_to_previous_card()
         st.rerun()
 
+
 with counter_column:
     st.markdown(
         (
@@ -546,6 +781,7 @@ with counter_column:
         ),
         unsafe_allow_html=True,
     )
+
 
 with next_column:
     if st.button(
@@ -559,4 +795,45 @@ with next_column:
         move_to_next_card(
             len(cards)
         )
+
         st.rerun()
+
+
+# -------------------------------------------------------------------
+# Focused-review completion
+# -------------------------------------------------------------------
+
+if (
+    focused_review_active
+    and current_card_number == len(cards)
+):
+    st.divider()
+
+    st.success(
+        "You reached the final card in this focused-review deck.",
+        icon="🎉",
+    )
+
+    completion_column, restart_column = st.columns(
+        2
+    )
+
+    with completion_column:
+        if st.button(
+            "Finish focused review",
+            type="primary",
+            use_container_width=True,
+        ):
+            exit_focused_review()
+
+            st.switch_page(
+                "pages/4_Progress.py"
+            )
+
+    with restart_column:
+        if st.button(
+            "Review deck again",
+            use_container_width=True,
+        ):
+            reset_flashcard_session()
+            st.rerun()

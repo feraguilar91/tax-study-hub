@@ -85,7 +85,7 @@ def open_flashcards(
     st.session_state.flash_shuffle_ids = None
 
     st.switch_page(
-        "pages/1_Flashcards.py"
+    "pages/2_Flashcards.py"
     )
 
 
